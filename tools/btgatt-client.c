@@ -20,6 +20,12 @@
 #include <getopt.h>
 #include <limits.h>
 #include <errno.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <errno.h>
+
 
 #include "lib/bluetooth.h"
 #include "lib/hci.h"
@@ -47,6 +53,16 @@
 #define COLOR_MAGENTA	"\x1B[0;95m"
 #define COLOR_BOLDGRAY	"\x1B[1;30m"
 #define COLOR_BOLDWHITE	"\x1B[1;37m"
+
+#define DEV_PATH  "/tmp/ttyTEST"
+
+#define SOCK_PATH  "/tmp/test.sock"
+int server_sock;
+int client_sock;
+int rc;
+struct sockaddr_un server_sockaddr;
+struct sockaddr_un client_sockaddr;
+
 
 static bool verbose = false;
 
@@ -547,7 +563,7 @@ static void read_cb(bool success, uint8_t att_ecode, const uint8_t *value,
 	printf(" (%u bytes): ", length);
 
 	for (i = 0; i < length; i++)
-		printf("%02x ", value[i]);
+		printf("%02x fuku", value[i]);
 
 	PRLOG("\n");
 }
@@ -1079,6 +1095,7 @@ static void notify_cb(uint16_t value_handle, const uint8_t *value,
 					uint16_t length, void *user_data)
 {
 	int i;
+  char v[2];
 
 	printf("\n\tHandle Value Not/Ind: 0x%04x - ", value_handle);
 
@@ -1090,7 +1107,10 @@ static void notify_cb(uint16_t value_handle, const uint8_t *value,
 	printf("(%u bytes): ", length);
 
 	for (i = 0; i < length; i++)
+  {
 		printf("%02x ", value[i]);
+    rc = send(client_sock, &value[i], 1, 0);
+  }
 
 	PRLOG("\n");
 }
@@ -1635,10 +1655,66 @@ int main(int argc, char *argv[])
 
 	print_prompt();
 
+  server_sock = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (server_sock == -1)
+  {
+      printf("SOCKET ERROR: %d\n", strerror(errno));
+      exit(1);
+  }
+  printf("SOCKET GOOD\n");
+  server_sockaddr.sun_family = AF_UNIX;   
+  strcpy(server_sockaddr.sun_path, SOCK_PATH); 
+  size_t len = sizeof(server_sockaddr);
+
+  unlink(SOCK_PATH);
+  rc = bind(server_sock, (struct sockaddr *) &server_sockaddr, len);
+  if (rc == -1)
+  {
+      printf("BIND ERROR: %d\n", strerror(errno));
+      close(server_sock);
+      exit(1);
+  }
+
+  rc = listen(server_sock, 10);
+  if (rc == -1){ 
+      printf("LISTEN ERROR: %d\n", strerror(errno));
+      close(server_sock);
+      exit(1);
+  }
+  printf("socket listening...\n");
+
+  client_sock = accept(server_sock, (struct sockaddr *) &client_sockaddr, &len);
+  if (client_sock == -1){
+      printf("ACCEPT ERROR: %d\n", strerror(errno));
+      close(server_sock);
+      close(client_sock);
+      exit(1);
+  }
+
+//rc = send(client_sock, "hello world!", 12, 0);
+
+  /*
+	int err = ioctl(server_sock, 200);
+	if (err == -1)
+  {
+		err = -errno;
+
+		if (err == -EOPNOTSUPP)
+			fprintf(stderr, "RFCOMM TTY support not available\n");
+		else
+			perror("Can't create device");
+    return -1;
+	}
+  printf("IOCTL GOOD\n");
+  */
 	mainloop_run_with_signal(signal_cb, NULL);
+  //cmd_register_notify(cli, "0x37");
+
 
 	printf("\n\nShutting down...\n");
 
+  close(server_sock);
+  close(client_sock);
 	client_destroy(cli);
 
 	return EXIT_SUCCESS;
